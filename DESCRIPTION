@@ -1,0 +1,24 @@
+Package: HDXstatsR
+Title: Statistics for Differential HDX-MS Experiments
+Version: 0.0.0.9000
+Authors@R: 
+    person(given="Jürgen", family="Claesen", email="jurgen.claesen@gmail.com", role = c("aut", "cre"))
+Description: Commonly used test-statistics and moderated test-statistics to detect differences in deuteration for differential HDX-MS experiments.
+    Basic visualization methods are also available.
+License: GPL (>= 3)
+Encoding: UTF-8
+URL: https://github.com/jclaesen/
+BugReports: https://github.com/jclaesen/
+Roxygen: list(markdown = TRUE)
+RoxygenNote: 7.1.2
+Imports: 
+    ggplot2, 
+	limma, 
+	stats,
+	utils,
+	mpm
+Suggests: 
+    rmarkdown,
+    knitr,
+	BRAIN
+VignetteBuilder: knitr

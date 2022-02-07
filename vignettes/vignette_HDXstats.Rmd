@@ -1,0 +1,245 @@
+---
+title: "Statistics for Differential HDX-MS Experiments"
+description: >
+  Learn how to start using the HDXstats package.
+output: rmarkdown::html_vignette
+author: "Jürgen Claesen"
+
+vignette: >
+  %\VignetteIndexEntry{Statistics for Differential HDX-MS Experiments}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+# Introduction
+The HDXstats package is designed to give researchers access to pre-processing tools, exploratory data analysis, differential deuteration testing and visualization of differential HDX-MS experiments. In this vignette, we describe a workflow to identify differentially deuterated peptides, demonstrating the use of the implemented tools.
+
+# Workflow
+## A. Set-up
+```{r setup}
+library(HDXstatsR)
+
+```
+
+## Dataset
+The dataset we use here is a simulated dataset, stored as a DynamX cluster csv file. It reflects a real-life dataset with 108 peptides, measured in three different states ('0', '1' and '2'). Each peptide was exposed to deuterium for 0mins, 1min, 10mins, 25mins, 1hr and 24hrs.
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>"
+)
+```
+
+
+## B. Reading-in data
+```{r read data}
+#data as DynamX cluster.csv file
+rawData <- read.csv(system.file("extdata", "simulatedData.csv", package = "HDXstatsR", 
+  mustWork = TRUE))
+head(rawData)
+```
+
+## C. Converting data
+The data needs to be converted to a format that can be used as input for the following steps in the analysis workflow. The function ```calculateDeuteriumLevels()``` converts DynamX cluster.csv files to the correct format and automatically calculates the deuteration levels of each peptide at each labeling time point. The converted data consists of six columns: ```peptide```, ```start```, ```end```,```label_time```, ```state``` and ```deuterium_level```. Make sure that the DynamX cluster file contains HDX labeling time points of 0mins for each peptide.
+
+```{r convert data}
+processedData <- calculateDeuteriumLevels(rawData, type = "DynamX cluster")
+head(processedData)
+```
+
+#### Butterfly plot
+```{r butterfly, fig.width= 7.2, fig.height=7.2}
+butterflyPlot <- createButterflyPlot(processedData, states=c("0","1"))
+butterflyPlot
+```
+
+#### Deuteration plot
+```{r deuteration, fig.width= 7.2, fig.height=7.2}
+deutPlot <- createDeuterationPlot(processedData, peptides = c("YLRQVID", "YLRQVIDV", "YLRQVIDVL", "LRQVID", "LRQVIDV", "LRQVIDVL", "RQVIDV", "RQVIDVL", "VIDVL"))
+deutPlot
+```
+
+## D. Exploratory Data analysis
+An important step in the analysis of differential HDX-MS data is exploratory data analysis. At this moment, ```HDXstatsR``` provides two options: principal component analysis and spectral map analysis. Both are multivariate projection methods that show similarities and dissimilarities between samples and the most variable peptides. Samples from the same protein state are expected to cluster together. For more information we refer to Claesen et al. (2021) and to Wouters et al. (2003).
+
+```{r eda, fig.width= 7.2, fig.height=7.2}
+nbTime <- 5#5 time points without exposure 0.0min
+nbRep <- 3
+grp <- rep(unique(processedData$state),each=nbRep*nbTime)
+
+#Principal Component Analysis:
+pcaRes <- exploratoryDataAnalysis(processedData, nbRep, type="pca")
+plot(pcaRes, label.tol=20, scale="uvc", col.group=grp, zoom=c(1,1.2), col.size=5)
+
+#Spectral Map Analysis
+smaRes <- exploratoryDataAnalysis(processedData, nbRep, type="sma")
+plot(smaRes, label.tol=5, scale="uvc", col.group=grp, zoom=c(1,1.2), col.size=5)
+```
+
+
+
+## E. Differential Deuteration analysis
+In this step, we would like to identify, at each labeling time point, which peptides have different deuteration-levels between the different states. ```HDXstatsR``` has seven different methods to find such differentially deuterated peptides: the two-sample t-test, the global threshold approach, the hybrid significance test, the moderated t-statistic, the moderated thresholded t-statistic, the moderated F-statistic and the manual thresholding approach. For more information on these methods, check Claesen et al. (2021).
+
+### 1. Two-sample t-test
+```{r ttestHDX}
+#compare peptides from state '0' with state '1'
+resultsTtest <- ttestHDX(dataset=processedData, nbRep=nbRep, group=c("0","1"), alpha=0.05)
+head(resultsTtest)
+```
+
+### 2. The "global threshold"-approach
+```{r global}
+#compare peptides from state '0' with state '1'
+resultsGlobal <- globalThreshold(dataset=processedData, nbRep=nbRep, group=c("0","1"), alpha=0.05)
+head(resultsGlobal)
+```
+### 3. The hybrid significance test
+```{r hybrid}
+#compare peptides from state '0' with state '1'
+resultsHybrid <- hybridSignificanceTest(dataset=processedData, nbRep=nbRep, group=c("0","1"), alpha=0.05)
+head(resultsHybrid)
+```
+
+### 4. Moderated test statistics
+The moderated test statistics are used in combination with linear models, assuming that the deuterium-levels are normally distributed. In order to fit the linear models, a design matrix and a contrast matrix has to be defined. The number of rows of the design matrix correspond to the number of observations (number of replicates multiplied by the number of labeling time points and by the number of protein states), while the number of columns correspond to the number of unknown coefficients of the linear model. Differences in deuteration levels between conditions and/or labeling times can be tested by specifying the contrasts between the coefficients.
+
+#### 4.1. Converting the dataset to the right format
+The moderated test statistics require that the format of the data is wide, i.e., the rows correspond to the peptides and the columns to the observations
+```{r convert}
+convertedData <- convertLongToWide(processedData, nbRep=nbRep)
+rownames(convertedData) <- convertedData$peptide
+convertedData$peptide <- NULL
+```
+#### 4.2. Creating a design matrix and contrasts
+
+```{r designMatrix}
+#first we create two vectors (stateVector and timeVector) corresponding to the protein states 
+#and to the labeling times
+stateVector <- paste("state",unique(processedData$state), sep="_")
+timeVector <- paste("label_time", unique(processedData$label_time), sep="_")
+
+#based on these two vectors we now create a vector that will correspond to the rows of the design matrix
+nbState <- length(stateVector)
+nbTime <- length(timeVector)
+nbRep <- 3
+
+designNames <- rep(paste(rep(stateVector, each=nbTime), rep(timeVector, nbState), sep="."),each=nbRep)
+
+#then, we create the design matrix
+designM <- model.matrix(~0+designNames)
+colnames(designM) <- gsub("designNames","", colnames(designM))
+dim(designM)
+
+#After creating the design matrix, we will specify the contrast matrix. Here, we are 
+#interested in all pairwise differences (state 0 vs state 1, state 0 vs state 2 
+#and state 1 vs state2) at each labeling time point.
+
+contrastM <- createContrastMatrix(states=stateVector, label_time=timeVector, designMatrix=designM)
+#dim(contrastM)
+#colnames(contrastM)
+```
+#### 4.3. The moderated F-test
+With the moderated F-test we can test if there is a difference between the 
+deuteration-levels of each peptide between the two or more states. We repeat the 
+F-test for each individual labeling time (except when time is 'label_time_0'), 
+and store the results in a list.
+```{r modF}
+
+
+interestingLabelingTimes <- timeVector[timeVector!="label_time_0"]
+result_Ftest <- list()
+for(k in interestingLabelingTimes){
+ comparison <- colnames(contrastM)[grepl(paste0(k,'$'),colnames(contrastM))]
+ result_Ftest[[k]] <- moderated.Ftest(design = designM,
+   contrastMatrix = contrastM,
+   comparisons = comparison,
+   adjust.method = "BH",
+   dataset = convertedData)
+}
+length(result_Ftest)
+names(result_Ftest)
+head(result_Ftest[[1]])
+```
+
+#### 4.4. The moderated t-test
+With the moderated t-test we can test if there are statistically significant 
+differences between the deuteration-levels of each peptide. 
+The results of each pairwise comparison (for each labeling time point) are stored in a list.
+```{r modT}
+result_Ttest <- moderated.Ttest(design = designM,
+  contrastMatrix = contrastM,
+  mod.test="t.test",
+  adjust.method = "BH",
+  dataset = convertedData)
+
+length(result_Ttest)
+names(result_Ttest)
+
+#state0 vs state1 at label_time 1min
+head(result_Ttest[["state_0.label_time_1-state_1.label_time_1"]])
+```
+
+#### 4.5. The thresholded moderated t-test
+With the thresholded moderated t-test we can test if there are statistically
+significant differences, greater than a prespecified threshold, between the 
+deuteration-levels of each peptide.
+The results of each pairwise comparison (for each labeling time point) 
+are stored in a list.
+```{r thresh_modT}
+#threshold chosen here is 0.25Da
+result_thresh <- moderated.Ttest(design = designM, 
+  contrastMatrix = contrastM, 
+  mod.test="thresholded",
+  threshold=0.25,
+  adjust.method ="BH" , 
+  dataset = convertedData)
+
+length(result_thresh)
+names(result_thresh)
+
+#state0 vs state1 at label_time 1min
+head(result_thresh[["state_0.label_time_1-state_1.label_time_1"]])
+```
+
+### 5. Visualization
+#### Barplot
+```{r barplot, fig.width= 7.2, fig.height=7.2}
+barplotOutput <- createBarPlot(result_thresh, alpha = 0.05, col=rep(c("gray75","gray50","gray25"),times=6),
+  xlabels=rep(c("0min","1min","10mins","25mins","60mins","1440mins"),each=3))
+barplotOutput
+```
+
+#### Volcanoplot
+```{r volcano, fig.width= 7.2, fig.height=7.2}
+volcPlot <- createVolcanoPlot(result_thresh[["state_0.label_time_60-state_1.label_time_60"]], 
+  alpha = 0.05)
+volcPlot
+```
+
+#### MAplot
+```{r MA, fig.width= 7.2, fig.height=7.2}
+maPlot <- createMAPlot(result_thresh[["state_0.label_time_60-state_1.label_time_60"]], 
+  alpha = 0.05)
+maPlot
+```
+
+#### Coverage plot
+```{r cov, fig.width= 7.2, fig.height=3.6}
+covPlot <- coveragePlot(rawData)
+covPlot
+```
+
+#### Woods-plot
+```{r woods, fig.width= 7.2, fig.height=3.6}
+seqInfo <- processedData[!duplicated(processedData[,'peptide']),c('peptide','start','end')]
+woodsPlot <- createWoodsPlot(result_thresh[["state_0.label_time_60-state_1.label_time_60"]], 
+  seqInfo = seqInfo, alpha = 0.05)
+woodsPlot
+```
+
+#### Heatmap
+```{r heatmap, fig.width= 7.2, fig.height=7.2}
+createHeatmap(convertedData)
+```
