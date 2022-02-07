@@ -307,6 +307,7 @@ createMAPlot <- function(diffDeutResult, alpha=0.05){
   return(pMAplot)
 }
 
+
 #' create clustered heatmaps
 #'
 #' @param dataset output from convertLongToWide
